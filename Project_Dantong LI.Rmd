@@ -1,0 +1,136 @@
+---
+title: "Practical Machine Learning - Final Project Coursera"
+author: Dantong LI
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library
+```{r,message=FALSE,warning=FALSE}
+library(caret)
+library(dplyr) 
+library(lattice)
+library(lubridate)
+library(dummies)
+set.seed(42)
+```
+
+## Getting the data
+```{r}
+data <- read.csv('C:/Users/ldt11/Downloads/machine learning/pml-training.csv',stringsAsFactors = TRUE)
+test <- read.csv('C:/Users/ldt11/Downloads/machine learning/pml-testing.csv')
+
+```
+
+## Cleaning the data
+we drop all the columns containing NA or missing values
+```{r}
+colMeans(is.na(data)) #calculate the percentage of each column that is missing
+data = data[ , colSums(is.na(data)) == 0] #counts the number of NAs per column,and converts into logical ture/false,subsets the ture 
+emptycols = colSums(data == "") > 0 
+data = data[!emptycols]
+
+
+test = test[ , colSums(is.na(test)) == 0] 
+emptycols = colSums(test == "") > 0 
+test = test[!emptycols] 
+# do the same to test set
+```
+
+## Feature engineering
+drop the timestamp since we already have raw timestamp,then we do the onehotencoding
+```{r,message=FALSE,warning=FALSE}
+data = within(data, rm(cvtd_timestamp))
+test = within(test, rm(cvtd_timestamp))# do the same to test set
+# OneHotEncoding
+is.fact <- sapply(data, is.factor)
+factors.data <- data[, is.fact]
+data_new <- dummy.data.frame(data, names = c("user_name","new_window") , sep = ".")
+data_new = within(data_new, rm(X)) # OneHotEncoding
+
+test_new <- dummy.data.frame(test, names = c("user_name","new_window") , sep = ".")
+test_new = within(test_new, rm(X))
+test_new$new_window.no = rep(1,20)
+test_new$new_window.yes = rep(0,20)
+```
+
+## Splitting the data
+```{r}
+inTrain = createDataPartition(y = data_new$classe, p = 0.70, list=FALSE)
+train = data_new[inTrain,]
+valid = data_new[-inTrain,]
+
+x_train = within(train, rm(classe))
+y_train = train$classe
+x_valid = within(valid, rm(classe))
+y_valid = valid$classe
+dim(x_train)
+dim(x_valid)
+
+```
+## Model Build
+### PCA
+```{r}
+x_train.pr <- prcomp(x_train, center = TRUE, scale = TRUE)
+summary(x_train.pr)
+
+x_train.pr.var = x_train.pr$sdev^2
+x_train.pr.var.per = round(x_train.pr.var/sum(x_train.pr.var)*100, 1)
+barplot(x_train.pr.var.per, main = 'Scree Plot', 
+        xlab = 'Principle Component', 
+        ylab = 'Percent Variation')
+
+screeplot(x_train.pr, type = "l", npcs = 20, main = "Screeplot of the first 20 PCs")
+abline(h = 1, col="red", lty=5)
+legend("topright", legend=c("Eigenvalue = 1"),
+       col=c("red"), lty=5, cex=0.6)
+
+cumpro <- cumsum(x_train.pr$sdev^2 / sum(x_train.pr$sdev^2))
+plot(cumpro[0:20], xlab = "PC #", 
+     ylab = "Amount of explained variance", main = "Cumulative variance plot")
+abline(v = 15, col="blue", lty=5)
+abline(h = 0.83938, col="blue", lty=5)
+
+# Notice that the first 15 components have an Eigenvalue >1 and explain more than 80% of variance
+
+```
+
+### cross validation
+```{r}
+train_control <- trainControl(method="cv", number=5)
+```
+
+### 1.1random forest with PCA
+```{r,message=FALSE,warning=FALSE}
+rf_model = train(classe ~ ., data = train, method="rf", preProcess='pca',trControl=train_control)#with PCA
+confusionMatrix(y_valid, predict(rf_model,x_valid))
+```
+
+### 1.2random forest without PCA
+```{r}
+rf_model1 = train(classe ~ ., data = train, method="rf",trControl=train_control)
+confusionMatrix(y_valid, predict(rf_model,x_valid)) #without PCA
+```
+
+### 2.gradient boosting machine
+```{r, message=FALSE,warning=FALSE}
+gbm_model = train(classe ~ ., data = train, method="gbm", preProcess='pca',verbose=FALSE)
+confusionMatrix(y_valid, predict(gbm_model,x_valid)) 
+```
+
+## 3.Linear Discriminant Analysis
+```{r}
+LDA = train(classe ~ ., data = train, method="lda", trControl=train_control,preProcess='pca')
+confusionMatrix(y_valid, predict(LDA,x_valid))
+```
+
+## prediction in test set
+Since Random Forest achieves the highest performance,we use it to predict
+```{r}
+prediction = predict(rf_model,test_new)
+prediction
+```
+
